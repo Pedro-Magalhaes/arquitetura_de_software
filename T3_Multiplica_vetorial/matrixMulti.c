@@ -102,7 +102,15 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i < filhos; i++) {
         pthread_join(threads[i], &status);
     }    
-
+    if(A.linhas == 8) {
+        printf("****DEBUG****\n");
+        printf("****MATRIZ A****\n");
+        matimprime(A.linhas,A.colunas, A.M, "%2.1f");
+        printf("****MATRIZ B****\n");
+        matimprime(B.linhas,B.colunas, B.M, "%2.1f");
+        printf("****MATRIZ RESULTADO****\n");
+        matimprime(C.linhas,C.colunas, C.M, "%2.1f");
+    }
     matlibera(A.linhas,A.M);
     matlibera(B.linhas,B.M);
     matlibera(C.linhas,C.M);
