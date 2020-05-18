@@ -87,11 +87,6 @@ int main(int argc, char* argv[]) {
     passo = A.linhas / filhos;     //passo é o numero de posições que cada filho procura
     int sobra = A.linhas % filhos; //se há sobra, o ultimo filho vai procurar passo+sobra posições
 
-    if(A.linhas < 4) {
-        printf("****DEBUG****\n");
-        printf("passo: %d\nSobra: %d\nthreads: %d\ndim_matrizes: %d\n",passo,sobra,filhos,A.colunas);
-    }
-
     data thread_data[filhos];
     pthread_t threads[filhos];
     
@@ -107,15 +102,7 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i < filhos; i++) {
         pthread_join(threads[i], &status);
     }    
-    if(A.linhas == 8) {
-        printf("****DEBUG****\n");
-        printf("****MATRIZ A****\n");
-        matimprime(A.linhas,A.colunas, A.M, "%2.1f");
-        printf("****MATRIZ B****\n");
-        matimprime(B.linhas,B.colunas, B.M, "%2.1f");
-        printf("****MATRIZ RESULTADO****\n");
-        matimprime(C.linhas,C.colunas, C.M, "%2.1f");
-    }
+
     matlibera(A.linhas,A.M);
     matlibera(B.linhas,B.M);
     matlibera(C.linhas,C.M);
