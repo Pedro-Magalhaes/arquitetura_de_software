@@ -1,0 +1,623 @@
+Relátorio Trabalho 4 - Pedro Felipe S Magalhães
+
+******Exercicio 3:*******
+
+Esse exercicio foi simples, bastou adaptar o código da versão inicial do problema
+para usar 256 threads da GPU e passar a calcular o indice de que cada thread ia acessar
+para fazer o cálculo, ao invés de usar o for que era usado anteriormente para calcular todo 
+vetor em apenas uma thread. 
+O indice foi calculado assim: int index = blockIdx.x * blockDim.x + threadIdx.x;
+
+* Execução:
+**V2**
+pfsmagalhaes@cass ~/Documents/puc/arquitetura/T4_gpu (master)$ ./gpu_add_arrays_v2
+Allocating arrays h_x and h_y on host...0.004000 ms
+Allocating array d_x and d_y on device...40.148998 ms
+Initializing array h_x and h_y on host...0.002000 ms
+Copying arrays from host to device...0.017000 ms
+Running kernel on elemnts of d_x and d_y...0.019000 ms
+Copying array from device (d_y) to host (h_y)...0.013000 ms
+Checking for processing errors...0.003000 ms
+Max error: 0.000000
+Freeing memory...0.063000 ms
+Overall time: 40.342999 ms
+
+** V1 (sem usar threads) 
+pfsmagalhaes@cass ~/Documents/puc/arquitetura/T4_gpu (master)$ ./gpu_add_arrays_v1
+Allocating arrays h_x and h_y on host...0.004000 ms
+Allocating array d_x and d_y on device...44.182999 ms
+Initializing array h_x and h_y on host...0.002000 ms
+Copying arrays from host to device...0.021000 ms
+Running kernel on elemnts of d_x and d_y...0.221000 ms
+Copying array from device (d_y) to host (h_y)...0.015000 ms
+Checking for processing errors...0.005000 ms
+Max error: 0.000000
+Freeing memory...0.062000 ms
+Overall time: 44.591999 ms
+
+
+* Conclusão:
+Vemos que aqui a diferença é bem pequena e o tempo é dominado pela alocação da memória na GPU
+acredito que isso ocorre pelo tamanho da instância que é de 1024 apenas então o overhead de 
+criar as threads acaba anulando a vantagem de distribuir o trabalho.
+No entanto vemos que o tempo de execução apenas do calculo na GPU cai um pouco (de 0.22 para 0.017)
+
+//// ******* Código ******/////
+#include <stdio.h>
+#include <stdlib.h>
+#include <cuda_runtime.h>
+#include "exec_time.h"
+
+#define DATASET_SIZE 1024
+#define THREADS_PER_BLOCK 256
+
+// Kernel function to add the elements of two arrays
+__global__ 
+void add(int n, float *d_x, float *d_y)
+{
+  int index = blockIdx.x * blockDim.x + threadIdx.x;
+  if (index < n) {
+    d_y[index] = d_x[index] + d_y[index];
+  }
+}
+
+int main_func(int argc, char **argv)
+{
+  float *h_x, *h_y;
+  float *d_x, *d_y;
+  cudaError_t cudaError;
+  int i;
+  struct timeval start, stop;
+
+  // Disable buffering entirely
+  setbuf(stdout, NULL);
+
+  // Allocating arrays on host
+  printf("Allocating arrays h_x and h_y on host...");
+  gettimeofday(&start, NULL);
+
+  h_x = (float*)malloc(DATASET_SIZE*sizeof(float));
+  h_y = (float*)malloc(DATASET_SIZE*sizeof(float));
+
+  // check malloc memory allocation
+  if (h_x == NULL || h_y == NULL) { 
+	printf("Error: malloc unable to allocate memory on host.");
+        return 1;
+  }
+
+  gettimeofday(&stop, NULL);
+  printf("%f ms\n", timedifference_msec(start, stop));
+
+  // Allocating array on device
+  printf("Allocating array d_x and d_y on device...");
+  gettimeofday(&start, NULL);
+
+  cudaError = cudaMalloc(&d_x, DATASET_SIZE*sizeof(float));
+
+  // check cudaMalloc memory allocation
+  if (cudaError != cudaSuccess) {
+	printf("cudaMalloc d_x returned error %s (code %d)\n", cudaGetErrorString(cudaError), cudaError);
+        return 1;
+  }
+
+  cudaError = cudaMalloc(&d_y, DATASET_SIZE*sizeof(float));
+
+  // check cudaMalloc memory allocation
+  if (cudaError != cudaSuccess) {
+	printf("cudaMalloc d_y returned error %s (code %d)\n", cudaGetErrorString(cudaError), cudaError);
+        return 1;
+  }
+
+  gettimeofday(&stop, NULL);
+  printf("%f ms\n", timedifference_msec(start, stop));
+
+  // Initialize host memory
+  printf("Initializing array h_x and h_y on host...");
+  gettimeofday(&start, NULL);
+
+  for (i =0; i < DATASET_SIZE; ++i) {
+	h_x[i] = 1.0f;
+	h_y[i] = 2.0f;
+  }
+
+  gettimeofday(&stop, NULL);
+  printf("%f ms\n", timedifference_msec(start, stop));
+
+  // Copy array from host to device
+  printf("Copying arrays from host to device...");
+  gettimeofday(&start, NULL);
+
+  cudaError = cudaMemcpy(d_x, h_x, DATASET_SIZE*sizeof(float), cudaMemcpyHostToDevice);
+
+  if (cudaError != cudaSuccess) {
+	printf("cudaMemcpy (h_x -> d_x) returned error %s (code %d), line(%d)\n", cudaGetErrorString(cudaError), cudaError, __LINE__);
+        return 1;
+  }
+
+  cudaError = cudaMemcpy(d_y, h_y, DATASET_SIZE*sizeof(float), cudaMemcpyHostToDevice);
+
+  if (cudaError != cudaSuccess) {
+	printf("cudaMemcpy (h_x -> d_x) returned error %s (code %d), line(%d)\n", cudaGetErrorString(cudaError), cudaError, __LINE__);
+        return 1;
+  }
+
+  gettimeofday(&stop, NULL);
+  printf("%f ms\n", timedifference_msec(start, stop));
+
+  // Run kernel on elements on the GPU
+  printf("Running kernel on elemnts of d_x and d_y...");
+  gettimeofday(&start, NULL);
+  int blockSize = THREADS_PER_BLOCK;
+  int numBlocks = (DATASET_SIZE + blockSize - 1) / blockSize;
+  add<<<numBlocks, blockSize>>>(DATASET_SIZE, d_x, d_y);
+
+  // Wait for GPU to finish before accessing on host
+  cudaDeviceSynchronize();
+
+  gettimeofday(&stop, NULL);
+  printf("%f ms\n", timedifference_msec(start, stop));
+
+  // Copy array from device to host
+  printf("Copying array from device (d_y) to host (h_y)...");
+  gettimeofday(&start, NULL);
+
+  cudaError = cudaMemcpy(h_y, d_y, DATASET_SIZE*sizeof(float), cudaMemcpyDeviceToHost);
+
+  if (cudaError != cudaSuccess)
+  {
+	printf("cudaMemcpy (d_y -> h_y) returned error %s (code %d), line(%d)\n", cudaGetErrorString(cudaError), cudaError, __LINE__);
+	return 1;
+  }
+
+  gettimeofday(&stop, NULL);
+  printf("%f ms\n", timedifference_msec(start, stop));
+
+  // Check for errors (all values should be 3.0f)
+  printf("Checking for processing errors...");
+  gettimeofday(&start, NULL);
+
+  float maxError = 0.0f;
+  float diffError = 0.0f;
+  for (i = 0; i < DATASET_SIZE; i++) {
+    maxError = (maxError > (diffError=fabs(h_y[i]-3.0f)))? maxError : diffError;
+    //printf("%d -> %f\n", i, h_y[i]);
+  }
+
+  gettimeofday(&stop, NULL);
+  printf("%f ms\n", timedifference_msec(start, stop));
+  printf("Max error: %f\n", maxError);
+
+  // Free memory
+  printf("Freeing memory...");
+  gettimeofday(&start, NULL);
+  cudaFree(d_x);
+  cudaFree(d_y);
+  free(h_x);
+  free(h_y);
+  gettimeofday(&stop, NULL);
+  printf("%f ms\n", timedifference_msec(start, stop));
+  
+  return 0;
+}
+
+//////  ******** FIM CODIGO ************/////
+
+
+************** EXERCICIO 4 *****
+
+** Relatório:
+Agora o numero total de blocos é maior do que o tamanho maximo do Grid,
+temos que usar aqui o gridDim.x para calcular o "passo" de incremento para cada etapa do calculo
+a função add passa a ter uma variavel "passo" = blockDim.x * gridDim.x e assim temos que usar um for
+para ir calculando cada parte
+
+for (int i = index; i < n; i += passo) {
+    d_y[i] = d_x[i] + d_y[i];
+}
+
+** Execução:
+pfsmagalhaes@cass ~/Documents/puc/arquitetura/T4_gpu (master)$ ./gpu_add_arrays_v3
+Allocating arrays h_x and h_y on host...0.011000 ms
+Allocating array d_x and d_y on device...41.655998 ms
+Initializing array h_x and h_y on host...4.650000 ms
+Copying arrays from host to device...0.841000 ms
+Running kernel on elemnts of d_x and d_y...0.217000 ms
+Copying array from device (d_y) to host (h_y)...0.485000 ms
+Checking for processing errors...3.236000 ms
+Max error: 0.000000
+Freeing memory...0.761000 ms
+Overall time: 51.973000 ms
+
+** Conclusão: 
+Mais uma vez o tempo de alocar memória na GPU é caro em relação aos outros custos
+Achei interessante que o tempo dessa versão com dado de 2^20 bits é bem proximo ao 
+tempo da versão do exercicio anterior que tinha apenas 256 o que faz o tempo total 
+aumentar aqui, em relação ao tempo do anterior,
+é a parte de verificação e de inicialização (feitos na CPU)
+
+/// **********  Código ****************** ////
+#include <stdio.h>
+#include <stdlib.h>
+#include <cuda_runtime.h>
+#include "exec_time.h"
+
+#define DATASET_SIZE 1048576
+#define THREADS_PER_BLOCK 256
+
+// Kernel function to add the elements of two arrays
+__global__ 
+void add(int n, float *d_x, float *d_y)
+{
+  int index = blockIdx.x * blockDim.x + threadIdx.x;
+  int passo = blockDim.x * gridDim.x;
+  for (int i = index; i < n; i += passo) {
+    d_y[i] = d_x[i] + d_y[i];
+  }
+}
+
+int main_func(int argc, char **argv)
+{
+  float *h_x, *h_y;
+  float *d_x, *d_y;
+  cudaError_t cudaError;
+  int i;
+  struct timeval start, stop;
+
+  // Disable buffering entirely
+  setbuf(stdout, NULL);
+
+  // Allocating arrays on host
+  printf("Allocating arrays h_x and h_y on host...");
+  gettimeofday(&start, NULL);
+
+  h_x = (float*)malloc(DATASET_SIZE*sizeof(float));
+  h_y = (float*)malloc(DATASET_SIZE*sizeof(float));
+
+  // check malloc memory allocation
+  if (h_x == NULL || h_y == NULL) { 
+	printf("Error: malloc unable to allocate memory on host.");
+        return 1;
+  }
+
+  gettimeofday(&stop, NULL);
+  printf("%f ms\n", timedifference_msec(start, stop));
+
+  // Allocating array on device
+  printf("Allocating array d_x and d_y on device...");
+  gettimeofday(&start, NULL);
+
+  cudaError = cudaMalloc(&d_x, DATASET_SIZE*sizeof(float));
+
+  // check cudaMalloc memory allocation
+  if (cudaError != cudaSuccess) {
+	printf("cudaMalloc d_x returned error %s (code %d)\n", cudaGetErrorString(cudaError), cudaError);
+        return 1;
+  }
+
+  cudaError = cudaMalloc(&d_y, DATASET_SIZE*sizeof(float));
+
+  // check cudaMalloc memory allocation
+  if (cudaError != cudaSuccess) {
+	printf("cudaMalloc d_y returned error %s (code %d)\n", cudaGetErrorString(cudaError), cudaError);
+        return 1;
+  }
+
+  gettimeofday(&stop, NULL);
+  printf("%f ms\n", timedifference_msec(start, stop));
+
+  // Initialize host memory
+  printf("Initializing array h_x and h_y on host...");
+  gettimeofday(&start, NULL);
+
+  for (i =0; i < DATASET_SIZE; ++i) {
+	h_x[i] = 1.0f;
+	h_y[i] = 2.0f;
+  }
+
+  gettimeofday(&stop, NULL);
+  printf("%f ms\n", timedifference_msec(start, stop));
+
+  // Copy array from host to device
+  printf("Copying arrays from host to device...");
+  gettimeofday(&start, NULL);
+
+  cudaError = cudaMemcpy(d_x, h_x, DATASET_SIZE*sizeof(float), cudaMemcpyHostToDevice);
+
+  if (cudaError != cudaSuccess) {
+	printf("cudaMemcpy (h_x -> d_x) returned error %s (code %d), line(%d)\n", cudaGetErrorString(cudaError), cudaError, __LINE__);
+        return 1;
+  }
+
+  cudaError = cudaMemcpy(d_y, h_y, DATASET_SIZE*sizeof(float), cudaMemcpyHostToDevice);
+
+  if (cudaError != cudaSuccess) {
+	printf("cudaMemcpy (h_x -> d_x) returned error %s (code %d), line(%d)\n", cudaGetErrorString(cudaError), cudaError, __LINE__);
+        return 1;
+  }
+
+  gettimeofday(&stop, NULL);
+  printf("%f ms\n", timedifference_msec(start, stop));
+
+  // Run kernel on elements on the GPU
+  printf("Running kernel on elemnts of d_x and d_y...");
+  gettimeofday(&start, NULL);
+  int blockSize = THREADS_PER_BLOCK;
+  int numBlocks = (DATASET_SIZE + blockSize - 1) / blockSize;
+  add<<<numBlocks, blockSize>>>(DATASET_SIZE, d_x, d_y);
+
+  // Wait for GPU to finish before accessing on host
+  cudaDeviceSynchronize();
+
+  gettimeofday(&stop, NULL);
+  printf("%f ms\n", timedifference_msec(start, stop));
+
+  // Copy array from device to host
+  printf("Copying array from device (d_y) to host (h_y)...");
+  gettimeofday(&start, NULL);
+
+  cudaError = cudaMemcpy(h_y, d_y, DATASET_SIZE*sizeof(float), cudaMemcpyDeviceToHost);
+
+  if (cudaError != cudaSuccess)
+  {
+	printf("cudaMemcpy (d_y -> h_y) returned error %s (code %d), line(%d)\n", cudaGetErrorString(cudaError), cudaError, __LINE__);
+	return 1;
+  }
+
+  gettimeofday(&stop, NULL);
+  printf("%f ms\n", timedifference_msec(start, stop));
+
+  // Check for errors (all values should be 3.0f)
+  printf("Checking for processing errors...");
+  gettimeofday(&start, NULL);
+
+  float maxError = 0.0f;
+  float diffError = 0.0f;
+  for (i = 0; i < DATASET_SIZE; i++) {
+    maxError = (maxError > (diffError=fabs(h_y[i]-3.0f)))? maxError : diffError;
+    //printf("%d -> %f\n", i, h_y[i]);
+  }
+
+  gettimeofday(&stop, NULL);
+  printf("%f ms\n", timedifference_msec(start, stop));
+  printf("Max error: %f\n", maxError);
+
+  // Free memory
+  printf("Freeing memory...");
+  gettimeofday(&start, NULL);
+  cudaFree(d_x);
+  cudaFree(d_y);
+  free(h_x);
+  free(h_y);
+  gettimeofday(&stop, NULL);
+  printf("%f ms\n", timedifference_msec(start, stop));
+  
+  return 0;
+}
+
+//////  ******** FIM CODIGO ************/////
+
+************** EXERCICIO 5 *****
+
+** Relatório:
+Nessa versão do problema temos que calcular um vetor que é maior que o limite de 
+alocação de memória na GPU, assim passamos a ter que quebrar o calculo em partes.
+Para isso, aloquei 2 vetores de tamanho maximo na GPU e fiz um for que ia carregando
+os 2 vetores a serem calculados por partes, até que todo vetor fosse calculado.
+A cada iteração do for ia avançando os ponteiros para a nova posiçao inicial para 
+refazer o carregamento da gpu a partir dessa posição.
+
+Para saber o numero de repetiçoes do for fiz o segunte calculo:
+int reps = DATASET_SIZE / MAX_DATA_SIZE;
+int rest = DATASET_SIZE % MAX_DATA_SIZE;
+
+Repare que foi necessário calcular o resto para o caso do data set não ser divisivel pelo 
+max_data_size. Assim a parte inicial do for ficou:
+  for( int i = 0; i <= reps; i++) {
+    int data_size = MAX_DATA_SIZE;
+    if (i == reps) { // caso o data_set não seja divisivel por 2^20
+      if(rest == 0) { // resto eh 0, acabou
+        break;
+      }
+      data_size = rest;
+    }
+
+Para calcular os tempos de execução e cópia tive que fazer um somatorio no "for"
+que era incrementado pelo tempo gasto nessas etapas em cada passada do "for"
+
+** Execução:
+pfsmagalhaes@cass ~/Documents/puc/arquitetura/T4_gpu (master)$ ./gpu_add_arrays_v4
+Allocating arrays h_x and h_y on host...0.011000 ms
+Allocating array d_x and d_y on device...42.987999 ms
+Initializing array h_x and h_y on host...21.877001 ms
+Copying arrays from host to device...3.145000 ms
+Running kernel on elemnts of d_x and d_y...0.735000 ms
+Copying array from device (d_y) to host (h_y)...2.092000 ms
+Checking for processing errors...13.783000 ms
+Max error: 0.000000
+Freeing memory...1.896000 ms
+Overall time: 86.662003 ms
+
+** Conclusão: 
+Aqui vemos que para vetores de tamanho arbitrariamente grandes temos que manualmente dividi-los em 
+partes para que possamos fazer o calculo na GPU. Mesmo para um vetor de 4Mb temos um tempo de execução
+abaixo de 1ms, comparando com o tempo que foi necessário para inicializar o vetor vemos o grande 
+beneficio de usar a gpu nesses casos. Gastamos 21ms para inicializar os vetores posição por
+posição na CPU e apenas 5.97ms para fazer o calculo CPU e copiar a resposta para o vetor na memória
+
+/// **********  Código ****************** ////
+#include <stdio.h>
+#include <stdlib.h>
+#include <cuda_runtime.h>
+#include "exec_time.h"
+
+#define DATASET_SIZE 4194304  // 2^22
+#define THREADS_PER_BLOCK 256
+
+#define MAX_DATA_SIZE 1048576//2^20
+
+// Kernel function to add the elements of two arrays
+__global__ 
+void add(int n, float *d_x, float *d_y)
+{
+  int index = blockIdx.x * blockDim.x + threadIdx.x;
+  int passo = blockDim.x * gridDim.x;
+  for (int i = index; i < n; i += passo) {
+    d_y[i] = d_x[i] + d_y[i];
+  }
+}
+
+int main_func(int argc, char **argv)
+{
+  float *h_x, *h_y;
+  float *d_x, *d_y;
+  cudaError_t cudaError;
+  int i;
+  struct timeval start, stop;
+
+  // Disable buffering entirely
+  setbuf(stdout, NULL);
+
+  // Allocating arrays on host
+  printf("Allocating arrays h_x and h_y on host...");
+  gettimeofday(&start, NULL);
+
+  h_x = (float*)malloc(DATASET_SIZE*sizeof(float));
+  h_y = (float*)malloc(DATASET_SIZE*sizeof(float));
+
+  // check malloc memory allocation
+  if (h_x == NULL || h_y == NULL) { 
+	printf("Error: malloc unable to allocate memory on host.");
+        return 1;
+  }
+
+  gettimeofday(&stop, NULL);
+  printf("%f ms\n", timedifference_msec(start, stop));
+
+  // Allocating array on device
+  printf("Allocating array d_x and d_y on device...");
+  gettimeofday(&start, NULL);
+
+  cudaError = cudaMalloc(&d_x, MAX_DATA_SIZE*sizeof(float));
+
+  // check cudaMalloc memory allocation
+  if (cudaError != cudaSuccess) {
+	printf("cudaMalloc d_x returned error %s (code %d)\n", cudaGetErrorString(cudaError), cudaError);
+        return 1;
+  }
+
+  cudaError = cudaMalloc(&d_y, MAX_DATA_SIZE*sizeof(float));
+
+  // check cudaMalloc memory allocation
+  if (cudaError != cudaSuccess) {
+	printf("cudaMalloc d_y returned error %s (code %d)\n", cudaGetErrorString(cudaError), cudaError);
+        return 1;
+  }
+
+  gettimeofday(&stop, NULL);
+  printf("%f ms\n", timedifference_msec(start, stop));
+
+  // Initialize host memory
+  printf("Initializing array h_x and h_y on host...");
+  gettimeofday(&start, NULL);
+
+  for (i =0; i < DATASET_SIZE; ++i) {
+	h_x[i] = 1.0f;
+	h_y[i] = 2.0f;
+  }
+
+  gettimeofday(&stop, NULL);
+  printf("%f ms\n", timedifference_msec(start, stop));
+
+  float *x,*y;
+  float timeToCopy = 0.0f;
+  float timeToAdd = 0.0f;
+  float timeToCopyBack = 0.0f;
+  x = h_x;
+  y = h_y;
+  int reps = DATASET_SIZE / MAX_DATA_SIZE;
+  int rest = DATASET_SIZE % MAX_DATA_SIZE;
+  for( int i = 0; i <= reps; i++) {
+    int data_size = MAX_DATA_SIZE;
+    if (i == reps) { // caso o data_set não seja divisivel por 2^20
+      if(rest == 0) { // resto eh 0, acabou
+        break;
+      }
+      data_size = rest;
+    }
+    gettimeofday(&start, NULL);
+    cudaError = cudaMemcpy(d_x, x, data_size*sizeof(float), cudaMemcpyHostToDevice);  
+    if (cudaError != cudaSuccess) {
+      printf("cudaMemcpy (h_x -> d_x) returned error %s (code %d), line(%d)\n", cudaGetErrorString(cudaError), cudaError, __LINE__);
+      return 1;
+     }
+    cudaError = cudaMemcpy(d_y, y, data_size*sizeof(float), cudaMemcpyHostToDevice);  
+    if (cudaError != cudaSuccess) {
+      printf("cudaMemcpy (h_x -> d_x) returned error %s (code %d), line(%d)\n", cudaGetErrorString(cudaError), cudaError, __LINE__);
+      return 1;
+    }
+    gettimeofday(&stop, NULL);
+    timeToCopy += timedifference_msec(start, stop);
+    
+    // Run kernel on elements on the GPU
+    //printf("Running kernel on elemnts of d_x and d_y...");
+    gettimeofday(&start, NULL);
+    int blockSize = THREADS_PER_BLOCK;
+    int numBlocks = (data_size + blockSize - 1) / blockSize;
+    add<<<numBlocks, blockSize>>>(data_size, d_x, d_y);
+
+    // Wait for GPU to finish before accessing on host
+    cudaDeviceSynchronize();
+    gettimeofday(&stop, NULL);
+    timeToAdd += timedifference_msec(start, stop);
+    
+    // Copy array from device to host
+    gettimeofday(&start, NULL);
+
+    cudaError = cudaMemcpy(y, d_y, data_size*sizeof(float), cudaMemcpyDeviceToHost);
+
+    if (cudaError != cudaSuccess)
+    {
+      printf("cudaMemcpy (d_y -> h_y) returned error %s (code %d), line(%d)\n", cudaGetErrorString(cudaError), cudaError, __LINE__);
+      return 1;
+    }
+    gettimeofday(&stop, NULL);
+    timeToCopyBack += timedifference_msec(start, stop);
+
+    y += data_size;
+    x += data_size;
+  }
+  
+  printf("Copying arrays from host to device...%f ms\n", timeToCopy);
+  printf("Running kernel on elemnts of d_x and d_y...%f ms\n", timeToAdd);
+  printf("Copying array from device (d_y) to host (h_y)...%f ms\n", timeToCopyBack);
+  
+  
+  // Check for errors (all values should be 3.0f)
+  printf("Checking for processing errors...");
+  gettimeofday(&start, NULL);
+
+  float maxError = 0.0f;
+  float diffError = 0.0f;
+  for (i = 0; i < DATASET_SIZE; i++) {
+    maxError = (maxError > (diffError=fabs(h_y[i]-3.0f)))? maxError : diffError;
+    //printf("%d -> %f\n", i, h_y[i]);
+  }
+
+  gettimeofday(&stop, NULL);
+  printf("%f ms\n", timedifference_msec(start, stop));
+  printf("Max error: %f\n", maxError);
+
+  // Free memory
+  printf("Freeing memory...");
+  gettimeofday(&start, NULL);
+  cudaFree(d_x);
+  cudaFree(d_y);
+  free(h_x);
+  free(h_y);
+  gettimeofday(&stop, NULL);
+  printf("%f ms\n", timedifference_msec(start, stop));
+  
+  return 0;
+}
+
+//// ****** FIM CÓDIGO *******/////
